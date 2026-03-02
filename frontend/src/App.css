@@ -87,3 +87,30 @@
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(180, 60, 60, 0.7);
 }
+
+/* uPlot styling overrides */
+.uplot {
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+.uplot .u-legend {
+  display: none;
+}
+
+.uplot .u-select {
+  background: rgba(180, 60, 60, 0.2) !important;
+  border: 1px solid rgba(180, 60, 60, 0.5);
+}
+
+.uplot .u-cursor-x,
+.uplot .u-cursor-y {
+  border-color: rgba(180, 60, 60, 0.4) !important;
+}
+
+.uplot .u-axis {
+  color: var(--silver);
+}
+
+.uplot canvas {
+  border-radius: 8px;
+}
