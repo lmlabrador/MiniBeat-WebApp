@@ -1,6 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 
-function makeDemoECG(n = 250 * 180) {
+type ECGPoint = { t: number; v: number };
+
+type ECGData = [Float64Array, Float64Array]; // [times, values]
+
+type Domain = [number, number];
+
+type HighlightArea = { left: number; right: number } | null;
+
+function makeDemoECG(n = 250 * 180): ECGData {
   const fs = 250;
   const times = new Float64Array(n);
   const values = new Float64Array(n);
@@ -36,11 +44,11 @@ function makeDemoECG(n = 250 * 180) {
   return [times, values];
 }
 
-function clamp(v, lo, hi) {
+function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
 }
 
-function clampDomain([l, r], [b0, b1]) {
+function clampDomain([l, r]: Domain, [b0, b1]: Domain): Domain {
   const span = Math.max(1e-9, r - l);
   const total = b1 - b0;
 
@@ -52,11 +60,18 @@ function clampDomain([l, r], [b0, b1]) {
   return [left, left + span];
 }
 
-// Timeline Scrollbar Component
-function TimelineScrollbar({ totalDomain, viewDomain, onViewChange, height = 40 }) {
-  const trackRef = useRef(null);
+// Simple grey scrollbar component
+interface ScrollbarProps {
+  totalDomain: Domain;
+  viewDomain: Domain;
+  onViewChange: (domain: Domain) => void;
+  height?: number;
+}
+
+function SimpleScrollbar({ totalDomain, viewDomain, onViewChange, height = 12 }: ScrollbarProps) {
+  const trackRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
-  const dragStartRef = useRef(null);
+  const dragStartRef = useRef<{ mouseX: number; viewLeft: number } | null>(null);
 
   const totalSpan = totalDomain[1] - totalDomain[0];
   const viewSpan = viewDomain[1] - viewDomain[0];
@@ -64,7 +79,7 @@ function TimelineScrollbar({ totalDomain, viewDomain, onViewChange, height = 40 
   const thumbLeft = ((viewDomain[0] - totalDomain[0]) / totalSpan) * 100;
   const thumbWidth = (viewSpan / totalSpan) * 100;
 
-  const handleTrackClick = (e) => {
+  const handleTrackClick = (e: React.MouseEvent) => {
     if (!trackRef.current) return;
     const rect = trackRef.current.getBoundingClientRect();
     const clickX = e.clientX - rect.left;
@@ -76,7 +91,7 @@ function TimelineScrollbar({ totalDomain, viewDomain, onViewChange, height = 40 
     onViewChange(newDomain);
   };
 
-  const handleThumbMouseDown = (e) => {
+  const handleThumbMouseDown = (e: React.MouseEvent) => {
     e.stopPropagation();
     setIsDragging(true);
     dragStartRef.current = {
@@ -88,7 +103,7 @@ function TimelineScrollbar({ totalDomain, viewDomain, onViewChange, height = 40 
   useEffect(() => {
     if (!isDragging) return;
 
-    const handleMouseMove = (e) => {
+    const handleMouseMove = (e: MouseEvent) => {
       if (!trackRef.current || !dragStartRef.current) return;
       const rect = trackRef.current.getBoundingClientRect();
       const deltaX = e.clientX - dragStartRef.current.mouseX;
@@ -113,59 +128,46 @@ function TimelineScrollbar({ totalDomain, viewDomain, onViewChange, height = 40 
     };
   }, [isDragging, totalDomain, viewSpan, onViewChange, totalSpan]);
 
-  const formatTime = (seconds) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = (seconds % 60).toFixed(1);
-    return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
-  };
-
   return (
-    <div className="mt-3 px-2" data-testid="timeline-scrollbar">
-      <div className="flex justify-between text-xs mb-1" style={{ color: '#9ca3af' }}>
-        <span>{formatTime(totalDomain[0])}</span>
-        <span className="font-medium" style={{ color: '#b43c3c' }}>
-          {formatTime(viewDomain[0])} - {formatTime(viewDomain[1])}
-        </span>
-        <span>{formatTime(totalDomain[1])}</span>
-      </div>
-      
+    <div className="mt-2 px-1" data-testid="timeline-scrollbar">
+      {/* Simple grey scrollbar track */}
       <div
         ref={trackRef}
         onClick={handleTrackClick}
-        className="relative rounded-full cursor-pointer transition-all"
+        className="relative rounded cursor-pointer"
         style={{
           height: `${height}px`,
-          background: 'rgba(255, 255, 255, 0.08)',
-          border: '1px solid rgba(255, 255, 255, 0.12)',
+          background: '#2a2a2a',
         }}
         data-testid="scrollbar-track"
       >
+        {/* Simple grey thumb */}
         <div
           onMouseDown={handleThumbMouseDown}
-          className="absolute top-0 bottom-0 rounded-full cursor-grab active:cursor-grabbing transition-shadow"
+          className="absolute top-0 bottom-0 rounded cursor-grab active:cursor-grabbing transition-colors"
           style={{
             left: `${thumbLeft}%`,
-            width: `${Math.max(thumbWidth, 2)}%`,
-            background: 'linear-gradient(180deg, rgba(180, 60, 60, 0.9) 0%, rgba(140, 40, 40, 0.9) 100%)',
-            border: '2px solid rgba(255, 255, 255, 0.3)',
-            boxShadow: isDragging 
-              ? '0 0 20px rgba(180, 60, 60, 0.6), inset 0 1px 0 rgba(255,255,255,0.2)' 
-              : '0 2px 8px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.2)',
+            width: `${Math.max(thumbWidth, 3)}%`,
+            background: isDragging ? '#888' : '#666',
           }}
           data-testid="scrollbar-thumb"
-        >
-          <div className="absolute inset-0 flex items-center justify-center gap-1">
-            <div className="w-0.5 h-3 rounded-full bg-white/40" />
-            <div className="w-0.5 h-4 rounded-full bg-white/50" />
-            <div className="w-0.5 h-3 rounded-full bg-white/40" />
-          </div>
-        </div>
+        />
       </div>
     </div>
   );
 }
 
 // High-performance Canvas ECG Chart
+interface CanvasChartProps {
+  data: ECGData;
+  xDomain: Domain;
+  yLabel?: string;
+  height?: number;
+  highlightArea?: HighlightArea;
+  highlightColor?: string | null;
+  onSelect?: (area: { left: number; right: number }) => void;
+}
+
 function CanvasECGChart({ 
   data, 
   xDomain, 
@@ -174,14 +176,14 @@ function CanvasECGChart({
   highlightArea,
   highlightColor,
   onSelect,
-}) {
-  const canvasRef = useRef(null);
-  const containerRef = useRef(null);
+}: CanvasChartProps) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height });
   const [isDragging, setIsDragging] = useState(false);
-  const [dragStart, setDragStart] = useState(null);
-  const [dragEnd, setDragEnd] = useState(null);
-  const [hoveredPoint, setHoveredPoint] = useState(null);
+  const [dragStart, setDragStart] = useState<number | null>(null);
+  const [dragEnd, setDragEnd] = useState<number | null>(null);
+  const [hoveredPoint, setHoveredPoint] = useState<{ t: number; v: number } | null>(null);
 
   const margin = { top: 20, right: 20, bottom: 40, left: 60 };
   const chartWidth = dimensions.width - margin.left - margin.right;
@@ -212,6 +214,8 @@ function CanvasECGChart({
     if (!canvas || !data || data[0].length === 0) return;
 
     const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
     const dpr = window.devicePixelRatio || 1;
     
     // Set canvas size with device pixel ratio for sharpness
@@ -222,8 +226,7 @@ function CanvasECGChart({
     ctx.scale(dpr, dpr);
 
     // Clear
-    ctx.fillStyle = 'transparent';
-    ctx.fillRect(0, 0, dimensions.width, height);
+    ctx.clearRect(0, 0, dimensions.width, height);
 
     const [times, values] = data;
     const [xMin, xMax] = xDomain;
@@ -231,11 +234,11 @@ function CanvasECGChart({
     const yMax = 4095;
 
     // Scale functions
-    const scaleX = (t) => margin.left + ((t - xMin) / (xMax - xMin)) * chartWidth;
-    const scaleY = (v) => margin.top + chartHeight - ((v - yMin) / (yMax - yMin)) * chartHeight;
+    const scaleX = (t: number) => margin.left + ((t - xMin) / (xMax - xMin)) * chartWidth;
+    const scaleY = (v: number) => margin.top + chartHeight - ((v - yMin) / (yMax - yMin)) * chartHeight;
 
     // Draw grid
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
     ctx.lineWidth = 1;
 
     // Vertical grid lines (time)
@@ -273,13 +276,6 @@ function CanvasECGChart({
       ctx.fillRect(x1, margin.top, x2 - x1, chartHeight);
     }
 
-    // Draw ECG line - optimized for large datasets
-    ctx.strokeStyle = '#b43c3c';
-    ctx.lineWidth = 2;
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-
     // Find data range to draw
     let startIdx = 0;
     let endIdx = times.length - 1;
@@ -304,9 +300,25 @@ function CanvasECGChart({
 
     // Downsample if too many points
     const visiblePoints = endIdx - startIdx;
-    const maxPoints = chartWidth * 2; // 2 points per pixel max
+    const maxPoints = chartWidth * 2;
     const step = visiblePoints > maxPoints ? Math.ceil(visiblePoints / maxPoints) : 1;
 
+    // Draw ECG line with highlight-like gradient/glow effect
+    ctx.save();
+    
+    // Create gradient for the line
+    const gradient = ctx.createLinearGradient(0, margin.top, 0, margin.top + chartHeight);
+    gradient.addColorStop(0, 'rgba(220, 80, 80, 0.9)');
+    gradient.addColorStop(0.5, 'rgba(180, 60, 60, 0.8)');
+    gradient.addColorStop(1, 'rgba(140, 40, 40, 0.7)');
+    
+    // Draw glow effect (wider, semi-transparent line behind)
+    ctx.strokeStyle = 'rgba(180, 60, 60, 0.3)';
+    ctx.lineWidth = 6;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    
     let first = true;
     for (let i = startIdx; i <= endIdx; i += step) {
       const x = scaleX(times[i]);
@@ -320,10 +332,30 @@ function CanvasECGChart({
       }
     }
     ctx.stroke();
+    
+    // Draw main line with gradient
+    ctx.strokeStyle = gradient;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    
+    first = true;
+    for (let i = startIdx; i <= endIdx; i += step) {
+      const x = scaleX(times[i]);
+      const y = scaleY(values[i]);
+      
+      if (first) {
+        ctx.moveTo(x, y);
+        first = false;
+      } else {
+        ctx.lineTo(x, y);
+      }
+    }
+    ctx.stroke();
+    ctx.restore();
 
     // Draw axes labels
-    ctx.fillStyle = '#9ca3af';
-    ctx.font = '12px sans-serif';
+    ctx.fillStyle = '#666';
+    ctx.font = '11px sans-serif';
     ctx.textAlign = 'center';
 
     // X-axis labels
@@ -350,13 +382,13 @@ function CanvasECGChart({
 
     // Draw hover tooltip
     if (hoveredPoint) {
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
-      ctx.strokeStyle = 'rgba(180, 60, 60, 0.5)';
       const tooltipX = scaleX(hoveredPoint.t);
       const tooltipY = scaleY(hoveredPoint.v);
       
       // Draw crosshair
+      ctx.strokeStyle = 'rgba(100, 100, 100, 0.5)';
       ctx.setLineDash([4, 4]);
+      ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(tooltipX, margin.top);
       ctx.lineTo(tooltipX, margin.top + chartHeight);
@@ -365,39 +397,31 @@ function CanvasECGChart({
 
       // Draw tooltip box
       const text = `t=${hoveredPoint.t.toFixed(3)}s  v=${Math.round(hoveredPoint.v)}`;
+      ctx.font = '11px sans-serif';
       const textWidth = ctx.measureText(text).width;
       const boxX = Math.min(tooltipX + 10, dimensions.width - textWidth - 30);
       const boxY = Math.max(tooltipY - 30, margin.top + 5);
       
-      ctx.fillStyle = 'rgba(26, 26, 26, 0.95)';
-      ctx.fillRect(boxX, boxY, textWidth + 16, 24);
-      ctx.strokeStyle = 'rgba(180, 60, 60, 0.5)';
-      ctx.strokeRect(boxX, boxY, textWidth + 16, 24);
+      ctx.fillStyle = 'rgba(30, 30, 30, 0.9)';
+      ctx.fillRect(boxX, boxY, textWidth + 16, 22);
       
-      ctx.fillStyle = '#fff';
+      ctx.fillStyle = '#aaa';
       ctx.textAlign = 'left';
-      ctx.fillText(text, boxX + 8, boxY + 16);
+      ctx.fillText(text, boxX + 8, boxY + 15);
     }
 
-  }, [data, xDomain, dimensions, height, highlightArea, highlightColor, isDragging, dragStart, dragEnd, hoveredPoint, chartWidth, chartHeight, yLabel]);
+  }, [data, xDomain, dimensions, height, highlightArea, highlightColor, isDragging, dragStart, dragEnd, hoveredPoint, chartWidth, chartHeight, yLabel, margin]);
 
   // Mouse handlers
-  const getTimeFromX = useCallback((clientX) => {
+  const getTimeFromX = useCallback((clientX: number): number | null => {
     if (!canvasRef.current) return null;
     const rect = canvasRef.current.getBoundingClientRect();
     const x = clientX - rect.left - margin.left;
     const [xMin, xMax] = xDomain;
     return xMin + (x / chartWidth) * (xMax - xMin);
-  }, [xDomain, chartWidth]);
+  }, [xDomain, chartWidth, margin.left]);
 
-  const getValueFromY = useCallback((clientY) => {
-    if (!canvasRef.current) return null;
-    const rect = canvasRef.current.getBoundingClientRect();
-    const y = clientY - rect.top - margin.top;
-    return 4095 - (y / chartHeight) * 4095;
-  }, [chartHeight]);
-
-  const findNearestPoint = useCallback((t) => {
+  const findNearestPoint = useCallback((t: number): { t: number; v: number } | null => {
     if (!data || !data[0].length) return null;
     const [times, values] = data;
     
@@ -413,7 +437,7 @@ function CanvasECGChart({
     return { t: times[idx], v: values[idx] };
   }, [data]);
 
-  const handleMouseDown = (e) => {
+  const handleMouseDown = (e: React.MouseEvent) => {
     const t = getTimeFromX(e.clientX);
     if (t !== null && t >= xDomain[0] && t <= xDomain[1]) {
       setIsDragging(true);
@@ -422,7 +446,7 @@ function CanvasECGChart({
     }
   };
 
-  const handleMouseMove = (e) => {
+  const handleMouseMove = (e: React.MouseEvent) => {
     const t = getTimeFromX(e.clientX);
     
     if (isDragging && t !== null) {
@@ -479,6 +503,16 @@ function CanvasECGChart({
   );
 }
 
+interface ECGWaveformPanelProps {
+  title?: string;
+  subtitle?: string;
+  data?: ECGPoint[];
+  yLabel?: string;
+  jumpTo?: number | null;
+  highlightWindowSec?: number;
+  highlightColor?: string | null;
+}
+
 export default function ECGWaveformPanel({
   title = "ECG Waveform - Channel 1",
   subtitle = "Demo data (will be replaced by uploaded file)",
@@ -487,9 +521,9 @@ export default function ECGWaveformPanel({
   jumpTo = null,
   highlightWindowSec = 8,
   highlightColor = null,
-}) {
+}: ECGWaveformPanelProps) {
   // Convert data to typed arrays format [times[], values[]]
-  const chartData = useMemo(() => {
+  const chartData = useMemo<ECGData>(() => {
     if (data) {
       const times = new Float64Array(data.length);
       const values = new Float64Array(data.length);
@@ -502,20 +536,20 @@ export default function ECGWaveformPanel({
     return makeDemoECG();
   }, [data]);
 
-  const baseDomain = useMemo(() => {
+  const baseDomain = useMemo<Domain>(() => {
     if (chartData[0].length < 2) return [0, 25];
     return [chartData[0][0], chartData[0][chartData[0].length - 1]];
   }, [chartData]);
 
   const DEFAULT_OVERVIEW_SEC = 25;
 
-  const [overviewDomain, setOverviewDomain] = useState(() => [0, DEFAULT_OVERVIEW_SEC]);
-  const [zoomViewDomain, setZoomViewDomain] = useState(null);
-  const [selectionArea, setSelectionArea] = useState(null);
-  const [activityHighlight, setActivityHighlight] = useState(null);
+  const [overviewDomain, setOverviewDomain] = useState<Domain>(() => [0, DEFAULT_OVERVIEW_SEC]);
+  const [zoomViewDomain, setZoomViewDomain] = useState<Domain | null>(null);
+  const [selectionArea, setSelectionArea] = useState<HighlightArea>(null);
+  const [activityHighlight, setActivityHighlight] = useState<HighlightArea>(null);
 
-  const overviewPanelRef = useRef(null);
-  const zoomPanelRef = useRef(null);
+  const overviewPanelRef = useRef<HTMLDivElement>(null);
+  const zoomPanelRef = useRef<HTMLDivElement>(null);
 
   // Reset on data change
   useEffect(() => {
@@ -556,7 +590,7 @@ export default function ECGWaveformPanel({
   }, [jumpTo, highlightWindowSec, baseDomain, chartData]);
 
   // Wheel pan for overview
-  const onOverviewWheel = useCallback((e) => {
+  const onOverviewWheel = useCallback((e: React.WheelEvent) => {
     const delta = -e.deltaY;
     if (delta === 0) return;
     e.preventDefault();
@@ -573,7 +607,7 @@ export default function ECGWaveformPanel({
   }, [overviewDomain, baseDomain]);
 
   // Wheel pan for zoom
-  const onZoomWheel = useCallback((e) => {
+  const onZoomWheel = useCallback((e: React.WheelEvent) => {
     if (!zoomViewDomain) return;
     const delta = -e.deltaY;
     if (delta === 0) return;
@@ -592,7 +626,7 @@ export default function ECGWaveformPanel({
   }, [zoomViewDomain, baseDomain]);
 
   // Handle selection on overview chart
-  const handleOverviewSelect = useCallback((selection) => {
+  const handleOverviewSelect = useCallback((selection: { left: number; right: number }) => {
     if (selection.right - selection.left < 0.02) return;
     
     const dom = clampDomain([selection.left, selection.right], baseDomain);
@@ -602,7 +636,7 @@ export default function ECGWaveformPanel({
   }, [baseDomain]);
 
   // Zoom window presets
-  const setZoomWindow = (sec) => {
+  const setZoomWindow = (sec: number) => {
     setZoomViewDomain((prev) => {
       const anchor = prev ? prev[0] : baseDomain[0];
       return clampDomain([anchor, anchor + sec], baseDomain);
@@ -613,10 +647,10 @@ export default function ECGWaveformPanel({
     <div className="frosted-glass rounded-2xl p-6 shadow-lg" data-testid="ecg-waveform-panel">
       <div className="mb-4 flex items-start justify-between gap-4">
         <div>
-          <h3 className="text-md font-medium" style={{ color: "#1a1a1a" }}>
+          <h3 className="text-md font-medium" style={{ color: "#ccc" }}>
             {title}
           </h3>
-          <p className="text-sm" style={{ color: "#9ca3af" }}>
+          <p className="text-sm" style={{ color: "#666" }}>
             {subtitle}
           </p>
         </div>
@@ -624,8 +658,8 @@ export default function ECGWaveformPanel({
         <button
           type="button"
           onClick={resetAll}
-          className="frosted-glass glow-hover rounded-xl px-4 py-2 text-sm transition-all duration-300"
-          style={{ color: "#b43c3c" }}
+          className="rounded px-3 py-1.5 text-sm transition-colors hover:bg-white/10"
+          style={{ color: "#888", border: '1px solid #444' }}
           data-testid="reset-button"
         >
           Reset
@@ -636,7 +670,7 @@ export default function ECGWaveformPanel({
       <div
         ref={overviewPanelRef}
         onWheel={onOverviewWheel}
-        className="ecg-paper-bg rounded-xl p-4"
+        className="ecg-paper-bg rounded-lg"
         style={{ width: "100%", position: "relative", userSelect: "none" }}
         data-testid="overview-chart"
       >
@@ -651,27 +685,27 @@ export default function ECGWaveformPanel({
         />
       </div>
 
-      {/* Timeline Scrollbar for Overview */}
-      <TimelineScrollbar
+      {/* Simple grey scrollbar for Overview */}
+      <SimpleScrollbar
         totalDomain={baseDomain}
         viewDomain={overviewDomain}
         onViewChange={setOverviewDomain}
-        height={32}
+        height={10}
       />
 
       {/* ZOOM VIEW */}
       {zoomViewDomain && (
         <div
-          className="mt-6 ecg-paper-bg rounded-xl p-4"
+          className="mt-6 ecg-paper-bg rounded-lg p-4"
           style={{ width: "100%", position: "relative" }}
           data-testid="zoom-view"
         >
           <div className="mb-3 flex items-center justify-between gap-3">
             <div>
-              <div className="text-sm font-medium" style={{ color: "#1a1a1a" }}>
+              <div className="text-sm font-medium" style={{ color: "#aaa" }}>
                 Zoom View
               </div>
-              <div className="text-xs" style={{ color: "#9ca3af" }}>
+              <div className="text-xs" style={{ color: "#666" }}>
                 {zoomViewDomain[0].toFixed(3)}s → {zoomViewDomain[1].toFixed(3)}s
               </div>
             </div>
@@ -682,13 +716,8 @@ export default function ECGWaveformPanel({
                   key={sec}
                   type="button"
                   onClick={() => setZoomWindow(sec)}
-                  className="px-3 py-1.5 rounded-lg text-sm font-medium transition-all hover:scale-105"
-                  style={{
-                    background: "rgba(255, 255, 255, 0.08)",
-                    border: "1px solid rgba(255, 255, 255, 0.15)",
-                    backdropFilter: "blur(10px)",
-                    color: "#9ca3af",
-                  }}
+                  className="px-2.5 py-1 rounded text-xs transition-colors hover:bg-white/10"
+                  style={{ color: "#777", border: '1px solid #444' }}
                   data-testid={`zoom-${sec}s-button`}
                 >
                   {sec}s
@@ -698,8 +727,8 @@ export default function ECGWaveformPanel({
               <button
                 type="button"
                 onClick={() => setZoomViewDomain(null)}
-                className="frosted-glass glow-hover rounded-xl px-3 py-1.5 text-sm transition-all duration-300"
-                style={{ color: "#b43c3c" }}
+                className="rounded px-2.5 py-1 text-xs transition-colors hover:bg-white/10"
+                style={{ color: "#b43c3c", border: '1px solid #444' }}
                 data-testid="close-zoom-button"
               >
                 Close
@@ -721,12 +750,12 @@ export default function ECGWaveformPanel({
             />
           </div>
 
-          {/* Timeline Scrollbar for Zoom View */}
-          <TimelineScrollbar
+          {/* Simple grey scrollbar for Zoom View */}
+          <SimpleScrollbar
             totalDomain={baseDomain}
             viewDomain={zoomViewDomain}
             onViewChange={setZoomViewDomain}
-            height={28}
+            height={8}
           />
         </div>
       )}
