@@ -60,7 +60,7 @@ function clampDomain([l, r]: Domain, [b0, b1]: Domain): Domain {
   return [left, left + span];
 }
 
-// Simple grey scrollbar component
+// Simple grey scrollbar component with transparent background
 interface ScrollbarProps {
   totalDomain: Domain;
   viewDomain: Domain;
@@ -130,25 +130,26 @@ function SimpleScrollbar({ totalDomain, viewDomain, onViewChange, height = 12 }:
 
   return (
     <div className="mt-2 px-1" data-testid="timeline-scrollbar">
-      {/* Simple grey scrollbar track */}
+      {/* Transparent track scrollbar */}
       <div
         ref={trackRef}
         onClick={handleTrackClick}
         className="relative rounded cursor-pointer"
         style={{
           height: `${height}px`,
-          background: '#2a2a2a',
+          background: 'transparent',
+          border: '1px solid rgba(255, 255, 255, 0.1)',
         }}
         data-testid="scrollbar-track"
       >
-        {/* Simple grey thumb */}
+        {/* Grey thumb */}
         <div
           onMouseDown={handleThumbMouseDown}
           className="absolute top-0 bottom-0 rounded cursor-grab active:cursor-grabbing transition-colors"
           style={{
             left: `${thumbLeft}%`,
             width: `${Math.max(thumbWidth, 3)}%`,
-            background: isDragging ? '#888' : '#666',
+            background: isDragging ? 'rgba(150, 150, 150, 0.8)' : 'rgba(120, 120, 120, 0.6)',
           }}
           data-testid="scrollbar-thumb"
         />
@@ -166,6 +167,7 @@ interface CanvasChartProps {
   highlightArea?: HighlightArea;
   highlightColor?: string | null;
   onSelect?: (area: { left: number; right: number }) => void;
+  yDomain?: Domain; // Dynamic y-axis domain
 }
 
 function CanvasECGChart({ 
@@ -176,6 +178,7 @@ function CanvasECGChart({
   highlightArea,
   highlightColor,
   onSelect,
+  yDomain,
 }: CanvasChartProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -188,6 +191,9 @@ function CanvasECGChart({
   const margin = { top: 20, right: 20, bottom: 40, left: 60 };
   const chartWidth = dimensions.width - margin.left - margin.right;
   const chartHeight = height - margin.top - margin.bottom;
+
+  // Use provided yDomain or default
+  const [yMin, yMax] = yDomain || [0, 4095];
 
   // Handle resize
   useEffect(() => {
@@ -230,8 +236,6 @@ function CanvasECGChart({
 
     const [times, values] = data;
     const [xMin, xMax] = xDomain;
-    const yMin = 0;
-    const yMax = 4095;
 
     // Scale functions
     const scaleX = (t: number) => margin.left + ((t - xMin) / (xMax - xMin)) * chartWidth;
@@ -251,8 +255,10 @@ function CanvasECGChart({
       ctx.stroke();
     }
 
-    // Horizontal grid lines (value)
-    for (let v = 0; v <= 4095; v += 1000) {
+    // Horizontal grid lines (value) - dynamic based on yDomain
+    const yRange = yMax - yMin;
+    const yStep = Math.ceil(yRange / 5 / 100) * 100; // Round to nearest 100
+    for (let v = Math.ceil(yMin / yStep) * yStep; v <= yMax; v += yStep) {
       const y = scaleY(v);
       ctx.beginPath();
       ctx.moveTo(margin.left, y);
@@ -260,7 +266,7 @@ function CanvasECGChart({
       ctx.stroke();
     }
 
-    // Draw highlight area
+    // Draw highlight area (for selection/activity) with highlight color style
     if (highlightArea) {
       ctx.fillStyle = highlightColor || 'rgba(180, 60, 60, 0.15)';
       const x1 = scaleX(highlightArea.left);
@@ -303,18 +309,9 @@ function CanvasECGChart({
     const maxPoints = chartWidth * 2;
     const step = visiblePoints > maxPoints ? Math.ceil(visiblePoints / maxPoints) : 1;
 
-    // Draw ECG line with highlight-like gradient/glow effect
-    ctx.save();
-    
-    // Create gradient for the line
-    const gradient = ctx.createLinearGradient(0, margin.top, 0, margin.top + chartHeight);
-    gradient.addColorStop(0, 'rgba(220, 80, 80, 0.9)');
-    gradient.addColorStop(0.5, 'rgba(180, 60, 60, 0.8)');
-    gradient.addColorStop(1, 'rgba(140, 40, 40, 0.7)');
-    
-    // Draw glow effect (wider, semi-transparent line behind)
-    ctx.strokeStyle = 'rgba(180, 60, 60, 0.3)';
-    ctx.lineWidth = 6;
+    // Draw ECG line - solid color like original
+    ctx.strokeStyle = '#b43c3c'; // cornell-red solid
+    ctx.lineWidth = 2;
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
     ctx.beginPath();
@@ -332,26 +329,6 @@ function CanvasECGChart({
       }
     }
     ctx.stroke();
-    
-    // Draw main line with gradient
-    ctx.strokeStyle = gradient;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    
-    first = true;
-    for (let i = startIdx; i <= endIdx; i += step) {
-      const x = scaleX(times[i]);
-      const y = scaleY(values[i]);
-      
-      if (first) {
-        ctx.moveTo(x, y);
-        first = false;
-      } else {
-        ctx.lineTo(x, y);
-      }
-    }
-    ctx.stroke();
-    ctx.restore();
 
     // Draw axes labels
     ctx.fillStyle = '#666';
@@ -365,11 +342,11 @@ function CanvasECGChart({
       ctx.fillText(t.toFixed(1) + 's', x, height - 10);
     }
 
-    // Y-axis labels
+    // Y-axis labels - dynamic
     ctx.textAlign = 'right';
-    for (let v = 0; v <= 4095; v += 1000) {
+    for (let v = Math.ceil(yMin / yStep) * yStep; v <= yMax; v += yStep) {
       const y = scaleY(v);
-      ctx.fillText(String(v), margin.left - 8, y + 4);
+      ctx.fillText(String(Math.round(v)), margin.left - 8, y + 4);
     }
 
     // Y-axis label
@@ -410,7 +387,7 @@ function CanvasECGChart({
       ctx.fillText(text, boxX + 8, boxY + 15);
     }
 
-  }, [data, xDomain, dimensions, height, highlightArea, highlightColor, isDragging, dragStart, dragEnd, hoveredPoint, chartWidth, chartHeight, yLabel, margin]);
+  }, [data, xDomain, yMin, yMax, dimensions, height, highlightArea, highlightColor, isDragging, dragStart, dragEnd, hoveredPoint, chartWidth, chartHeight, yLabel, margin]);
 
   // Mouse handlers
   const getTimeFromX = useCallback((clientX: number): number | null => {
@@ -517,7 +494,7 @@ export default function ECGWaveformPanel({
   title = "ECG Waveform - Channel 1",
   subtitle = "Demo data (will be replaced by uploaded file)",
   data,
-  yLabel = "ADC (0-4095)",
+  yLabel = "ADC",
   jumpTo = null,
   highlightWindowSec = 8,
   highlightColor = null,
@@ -535,6 +512,24 @@ export default function ECGWaveformPanel({
     }
     return makeDemoECG();
   }, [data]);
+
+  // Calculate dynamic Y domain based on data min/max + padding
+  const yDomain = useMemo<Domain>(() => {
+    const values = chartData[1];
+    if (values.length === 0) return [0, 4095];
+    
+    let minVal = values[0];
+    let maxVal = values[0];
+    
+    for (let i = 1; i < values.length; i++) {
+      if (values[i] < minVal) minVal = values[i];
+      if (values[i] > maxVal) maxVal = values[i];
+    }
+    
+    // Add padding of 200 to center and make plot look larger
+    const padding = 200;
+    return [Math.max(0, minVal - padding), maxVal + padding];
+  }, [chartData]);
 
   const baseDomain = useMemo<Domain>(() => {
     if (chartData[0].length < 2) return [0, 25];
@@ -682,6 +677,7 @@ export default function ECGWaveformPanel({
           highlightArea={selectionArea ?? activityHighlight}
           highlightColor={activityHighlight ? highlightColor : undefined}
           onSelect={handleOverviewSelect}
+          yDomain={yDomain}
         />
       </div>
 
@@ -747,6 +743,7 @@ export default function ECGWaveformPanel({
               xDomain={zoomViewDomain}
               yLabel={yLabel}
               height={220}
+              yDomain={yDomain}
             />
           </div>
 
