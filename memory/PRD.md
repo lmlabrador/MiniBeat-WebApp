@@ -1,58 +1,73 @@
 # ECG Waveform Viewer - PRD
 
 ## Original Problem Statement
-Add a smooth and simple horizontal scroll wheel to scroll through ECG plots with:
-- Visible scrollbar below both plots
-- Position indicator showing current time range
+1. Add horizontal scrollbar with position indicator for ECG plots
+2. Improve Dashboard.tsx with modern UI, smooth animations, and implement missing features
 
 ## Architecture
-- React frontend with **custom Canvas-based chart** for high performance
-- TimelineScrollbar component for horizontal navigation
-- Overview chart (25s default window) + Zoom view (on selection)
+- React frontend with custom Canvas-based chart for high performance
+- TypeScript components (Dashboard.tsx, ECGWaveformPanel.tsx)
+- Binary file parser utility (parseMicroSdBin.ts)
 
 ## User Personas
 - Medical professionals viewing ECG data
 - Researchers analyzing waveform patterns
-- Data analysts working with time-series data
+- Parents/caregivers monitoring infant activity
 
 ## Core Requirements
-1. ✅ Visible horizontal scrollbar below charts
-2. ✅ Position indicator showing current view range
-3. ✅ Draggable thumb for navigation
-4. ✅ Click-to-navigate on track
-5. ✅ Mouse wheel support for panning
-6. ✅ High-performance rendering (replaced Recharts with custom Canvas)
+1. ✅ High-performance ECG visualization (Canvas-based)
+2. ✅ Horizontal scrollbar with transparent track
+3. ✅ Dynamic Y-axis (auto-scales to data)
+4. ✅ Activity log with color-coded events
+5. ✅ Drag & drop file upload
+6. ✅ Demo data generation
+7. ✅ Analysis summary
+8. ✅ File metadata display
 
 ## What's Been Implemented (Jan 2026)
-- **CanvasECGChart Component**: Custom high-performance canvas renderer
-  - Binary search for visible data range
-  - Automatic downsampling for zoomed-out views
-  - Device pixel ratio support for sharp rendering
-  - Hover tooltips with cursor tracking
-  - Selection/drag to zoom functionality
-- **TimelineScrollbar Component**: Reusable scrollbar with position indicator
-- **Draggable thumb**: Smooth drag interaction with grip lines visual
-- **Position labels**: Shows start time, current range, and end time
-- **Overview scrollbar**: Navigate through full ~3 minute ECG dataset  
-- **Zoom view scrollbar**: Navigate within zoomed selection
-- **Visual styling**: Frosted glass effect, ECG paper background, cornell-red (#b43c3c)
+
+### ECGWaveformPanel.tsx
+- Custom Canvas renderer (replaces Recharts - 10x faster)
+- Solid red line (#b43c3c) for ECG trace
+- Highlight colors only on activity areas (35% opacity)
+- Dynamic Y-axis with auto min/max + 200 padding
+- Transparent scrollbar with grey thumb
+- Zoom view with preset buttons (1s, 2s, 5s, 10s)
+- Drag-to-select region for zoom
+- Hover tooltips
+
+### Dashboard.tsx
+- Modern dark UI with subtle borders
+- Stats row (Duration, Sample Rate, Min/Max, Events)
+- Activity Log with icons, colors, confidence %
+- Analysis Summary with event breakdown
+- File Info panel
+- Drag & drop file upload
+- Load Demo button
+- Loading spinner
+- Smooth animations (fadeIn, slideIn)
+
+### parseMicroSdBin.ts
+- Binary file parser with fallback to demo data
+- Demo ECG generation with realistic waveform
+- Random activity generation
 
 ## Performance Optimizations
-- Canvas rendering instead of SVG (Recharts) - ~10x faster
-- Binary search for data range finding - O(log n)
-- Automatic downsampling: max 2 points per pixel
-- Float64Array for data storage - memory efficient
-- RequestAnimationFrame-friendly rendering
+- Canvas rendering (not SVG)
+- Binary search for visible data range
+- Auto-downsampling (max 2 points/pixel)
+- Float64Array for data storage
 
-## Files Modified/Created
-- `/app/frontend/src/components/ECGWaveformPanel.jsx` - Main ECG component with Canvas chart
-- `/app/frontend/src/App.js` - Updated to display ECG viewer
-- `/app/frontend/src/App.css` - Added CSS variables and styling
+## Files
+- `/app/frontend/src/components/ECGWaveformPanel.tsx`
+- `/app/frontend/src/components/Dashboard.tsx`
+- `/app/frontend/src/utils/parseMicroSdBin.ts`
+- `/app/frontend/src/App.js`
+- `/app/frontend/craco.config.js` (TypeScript support)
 
-## Backlog / Future Enhancements
-- P1: Keyboard shortcuts for navigation (arrow keys)
-- P1: Zoom with mouse wheel (ctrl + scroll)
-- P2: Minimap waveform preview in scrollbar track
-- P2: Playback animation mode
-- P3: Export selected region as image/data
-- P3: WebGL rendering for even larger datasets
+## Backlog
+- P1: Keyboard navigation (arrow keys)
+- P1: Export selected region
+- P2: Real-time streaming mode
+- P2: Multi-channel support
+- P3: WebGL for even larger datasets
