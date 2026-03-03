@@ -1,15 +1,19 @@
-// Types
 export type ECGPoint = { t: number; v: number };
 
 export type ActivityLogItem = {
   id: string;
+  type?: number;
   label: string;
   tSec: number;
+  unixMs?: number;
   durationSec: number;
+  sampleIndex?: number;
+  blockNumber?: number;
+  posInBlock?: number;
   confidence?: number;
 };
 
-export type ParsedBinFile = {
+export type ParsedMicroSdBin = {
   fileId: number;
   adcBits: number;
   numChannels: number;
@@ -20,160 +24,168 @@ export type ParsedBinFile = {
   activities: ActivityLogItem[];
 };
 
-// Activity labels for demo
-const ACTIVITY_LABELS = ['Crying', 'Eating', 'Sleeping', 'Active', 'Resting', 'Feeding'];
+const FILE_HEADER_SIZE = 512;
+const BLOCK_SIZE = 512;
+const BLOCK_HEADER_SIZE = 19;
+const PAYLOAD_SIZE = 489;
+const CRC_OFFSET = 508;
 
-// Generate demo ECG data if real parsing fails or for testing
-function generateDemoECG(n: number = 250 * 180, sampleRate: number = 250): ECGPoint[] {
-  const points: ECGPoint[] = [];
-  
-  for (let i = 0; i < n; i++) {
-    const t = i / sampleRate;
-    const phase = t % 1.0;
-    
-    let v = 0;
-    
-    // P wave
-    if (phase > 0.15 && phase < 0.22) {
-      v += 0.12 * Math.sin(((phase - 0.15) / 0.07) * Math.PI);
-    }
-    // QRS complex
-    if (phase > 0.38 && phase < 0.42) v -= 0.15;
-    if (phase > 0.42 && phase < 0.44) v += 1.2;
-    if (phase > 0.44 && phase < 0.48) v -= 0.35;
-    // T wave
-    if (phase > 0.6 && phase < 0.75) {
-      v += 0.25 * Math.sin(((phase - 0.6) / 0.15) * Math.PI);
-    }
-    
-    // Baseline wandering + noise
-    v += 0.05 * Math.sin(2 * Math.PI * 0.33 * t);
-    v += 0.01 * Math.sin(2 * Math.PI * 22 * t);
-    v += (Math.random() - 0.5) * 0.02; // Small random noise
-    
-    const adc = Math.round(2048 + v * 1200);
-    points.push({ t, v: Math.max(0, Math.min(4095, adc)) });
-  }
-  
-  return points;
+function u64ToNumber(view: DataView, offset: number, littleEndian = true): number {
+  const lo = view.getUint32(offset + (littleEndian ? 0 : 4), littleEndian);
+  const hi = view.getUint32(offset + (littleEndian ? 4 : 0), littleEndian);
+  return hi * 2 ** 32 + lo;
 }
 
-// Generate demo activities
-function generateDemoActivities(totalDurationSec: number): ActivityLogItem[] {
+function activityCodeToActivityType(code: number): string {
+  switch (code) {
+    case 0x81:
+    case 0x41:
+      return "Crying";
+    case 0x82:
+    case 0x42:
+      return "Eating";
+    case 0x84:
+    case 0x44:
+      return "Sleep";
+    case 0x55:
+      return "End Session";
+    default:
+      return `Activity (0x${code.toString(16).padStart(2, "0")})`;
+  }
+}
+
+function isStartCode(code: number): boolean {
+  return (code & 0x80) === 0x80 && code !== 0x55;
+}
+
+function unpack12BitSamples(buffer: Uint8Array): number[] {
+  const samples: number[] = [];
+  let bitIndex = 0;
+
+  for (let i = 0; i < 326; i++) {
+    let value = 0;
+    for (let b = 0; b < 12; b++) {
+      const byteOffset = Math.floor((bitIndex + b) / 8);
+      const bitOffset = (bitIndex + b) % 8;
+      const bit = (buffer[byteOffset] >> bitOffset) & 1;
+      value |= bit << b;
+    }
+    samples.push(value);
+    bitIndex += 12;
+  }
+
+  return samples;
+}
+
+export function parseMicroSdBin(arrayBuffer: ArrayBuffer): ParsedMicroSdBin {
+  if (arrayBuffer.byteLength < FILE_HEADER_SIZE) {
+    throw new Error("File too small to contain header.");
+  }
+
+  const view = new DataView(arrayBuffer);
+
+  const fileId = view.getUint32(0, true);
+  const adcBits = view.getUint16(4, true);
+  const numChannels = view.getUint8(6);
+  const sampleRateHz = view.getUint16(7, true);
+  const startUnixMs = u64ToNumber(view, 9, true);
+  const samplesPerBlock = view.getUint16(17, true);
+
+  if (samplesPerBlock !== 326) {
+    throw new Error(`Unexpected samplesPerBlock=${samplesPerBlock}. Expected 326.`);
+  }
+  if (sampleRateHz <= 0) {
+    throw new Error("Invalid sampleRateHz in header.");
+  }
+  if (adcBits <= 0 || adcBits > 16) {
+    throw new Error("Invalid adcBits in header.");
+  }
+
+  const totalBlocks = Math.floor((arrayBuffer.byteLength - FILE_HEADER_SIZE) / BLOCK_SIZE);
+  if (totalBlocks <= 0) {
+    return { fileId, adcBits, numChannels, sampleRateHz, startUnixMs, samplesPerBlock, ecg: [], activities: [] };
+  }
+
+  const ecg: ECGPoint[] = [];
+  const activityRawEvents: Array<{
+    code: number;
+    tSec: number;
+    sampleIndex: number;
+    blockNumber: number;
+    blockTimestampMs: number;
+  }> = [];
+
+  for (let b = 0; b < totalBlocks; b++) {
+    const blockBase = FILE_HEADER_SIZE + b * BLOCK_SIZE;
+    const blockNumber = view.getUint32(blockBase + 0, true);
+    const firstSampleIndex = view.getUint32(blockBase + 4, true);
+    const blockTimestampMs = u64ToNumber(view, blockBase + 8, true);
+    const activityCode = view.getUint8(blockBase + 17);
+
+    const payloadBase = blockBase + BLOCK_HEADER_SIZE;
+    const payloadBytes = new Uint8Array(arrayBuffer, payloadBase, PAYLOAD_SIZE);
+    const samples12bit = unpack12BitSamples(payloadBytes);
+
+    for (let i = 0; i < samples12bit.length; i++) {
+      const v = samples12bit[i];
+      const sampleIndex = firstSampleIndex + i;
+      const t = sampleIndex / sampleRateHz;
+      ecg.push({ t, v });
+    }
+
+    if (activityCode !== 0) {
+      const sampleIndex = firstSampleIndex;
+      const tSec = sampleIndex / sampleRateHz;
+      activityRawEvents.push({ code: activityCode, tSec, sampleIndex, blockNumber, blockTimestampMs });
+    }
+
+    void CRC_OFFSET;
+  }
+
   const activities: ActivityLogItem[] = [];
-  let currentTime = Math.random() * 5; // Start at random point
-  
-  while (currentTime < totalDurationSec - 10) {
-    const duration = 5 + Math.random() * 15; // 5-20 seconds
-    const label = ACTIVITY_LABELS[Math.floor(Math.random() * ACTIVITY_LABELS.length)];
-    
-    activities.push({
-      id: `activity-${activities.length}-${Date.now()}`,
-      label,
-      tSec: currentTime,
-      durationSec: Math.round(duration * 10) / 10,
-      confidence: 0.7 + Math.random() * 0.3, // 70-100% confidence
-    });
-    
-    currentTime += duration + Math.random() * 20; // Gap between activities
-  }
-  
-  return activities;
-}
+  const pendingStarts = new Map<string, (typeof activityRawEvents)[0]>();
 
-// Parse binary file (with fallback to demo data)
-export function parseMicroSdBin(buffer: ArrayBuffer): ParsedBinFile {
-  const view = new DataView(buffer);
-  const fileSize = buffer.byteLength;
-  
-  // Try to parse header (assuming a simple format)
-  // If file is too small or invalid, generate demo data
-  if (fileSize < 32) {
-    console.warn('File too small, generating demo data');
-    return generateDemoData();
-  }
-  
-  try {
-    // Attempt to read header fields
-    // This is a generic format - adjust based on actual binary format
-    const fileId = view.getUint32(0, true);
-    const adcBits = view.getUint8(4) || 12;
-    const numChannels = view.getUint8(5) || 1;
-    const sampleRateHz = view.getUint16(6, true) || 250;
-    const startUnixMs = Number(view.getBigUint64(8, true)) || Date.now();
-    const samplesPerBlock = view.getUint16(16, true) || 256;
-    
-    // Calculate expected data size
-    const headerSize = 32;
-    const bytesPerSample = Math.ceil(adcBits / 8);
-    const dataSize = fileSize - headerSize;
-    const numSamples = Math.floor(dataSize / (bytesPerSample * numChannels));
-    
-    if (numSamples < 100) {
-      console.warn('Not enough samples, generating demo data');
-      return generateDemoData();
-    }
-    
-    // Parse ECG data
-    const ecg: ECGPoint[] = [];
-    let offset = headerSize;
-    
-    for (let i = 0; i < numSamples && offset < fileSize; i++) {
-      const t = i / sampleRateHz;
-      let v = 0;
-      
-      if (bytesPerSample === 2) {
-        v = view.getInt16(offset, true);
-      } else if (bytesPerSample === 1) {
-        v = view.getInt8(offset);
-      } else {
-        v = view.getUint16(offset, true);
+  for (const event of activityRawEvents) {
+    const actType = activityCodeToActivityType(event.code);
+    const isStart = isStartCode(event.code);
+
+    if (isStart) {
+      pendingStarts.set(actType, event);
+    } else {
+      const startEvent = pendingStarts.get(actType);
+      if (startEvent) {
+        const durationSec = event.tSec - startEvent.tSec;
+        activities.push({
+          id: `${actType}_${startEvent.blockNumber}_${startEvent.sampleIndex}`,
+          type: startEvent.code,
+          label: actType,
+          tSec: startEvent.tSec,
+          unixMs: startEvent.blockTimestampMs,
+          durationSec: Math.max(durationSec, 0),
+          sampleIndex: startEvent.sampleIndex,
+          blockNumber: startEvent.blockNumber,
+          posInBlock: 0,
+        });
+        pendingStarts.delete(actType);
       }
-      
-      ecg.push({ t, v: Math.abs(v) });
-      offset += bytesPerSample * numChannels;
     }
-    
-    // Generate activities based on data patterns or use embedded ones
-    const totalDuration = ecg.length / sampleRateHz;
-    const activities = generateDemoActivities(totalDuration);
-    
-    return {
-      fileId,
-      adcBits,
-      numChannels,
-      sampleRateHz,
-      startUnixMs,
-      samplesPerBlock,
-      ecg,
-      activities,
-    };
-    
-  } catch (error) {
-    console.error('Error parsing binary file:', error);
-    return generateDemoData();
   }
-}
 
-// Generate complete demo data
-function generateDemoData(): ParsedBinFile {
-  const sampleRateHz = 250;
-  const durationSec = 180; // 3 minutes
-  const numSamples = sampleRateHz * durationSec;
-  
-  return {
-    fileId: Math.floor(Math.random() * 1000000),
-    adcBits: 12,
-    numChannels: 1,
-    sampleRateHz,
-    startUnixMs: Date.now(),
-    samplesPerBlock: 256,
-    ecg: generateDemoECG(numSamples, sampleRateHz),
-    activities: generateDemoActivities(durationSec),
-  };
-}
+  for (const [actType, startEvent] of pendingStarts) {
+    activities.push({
+      id: `${actType}_orphan_${startEvent.blockNumber}_${startEvent.sampleIndex}`,
+      type: startEvent.code,
+      label: `${actType} (Start only)`,
+      tSec: startEvent.tSec,
+      unixMs: startEvent.blockTimestampMs,
+      durationSec: 0,
+      sampleIndex: startEvent.sampleIndex,
+      blockNumber: startEvent.blockNumber,
+      posInBlock: 0,
+    });
+  }
 
-// Export demo generator for testing
-export function generateDemoFile(): ParsedBinFile {
-  return generateDemoData();
+  activities.sort((a, b) => a.tSec - b.tSec);
+
+  return { fileId, adcBits, numChannels, sampleRateHz, startUnixMs, samplesPerBlock, ecg, activities };
 }
